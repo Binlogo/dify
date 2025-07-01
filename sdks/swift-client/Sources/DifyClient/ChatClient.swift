@@ -109,6 +109,7 @@ public final class ChatClient: DifyClient {
                     
                     for try await chunk in stream {
                         guard let chunkString = String(data: chunk, encoding: .utf8) else {
+                            print("❌ ChatClient: Failed to decode chunk data as UTF-8")
                             continue
                         }
                         
@@ -122,6 +123,7 @@ public final class ChatClient: DifyClient {
                                 let jsonString = String(line.dropFirst(6))
                                 
                                 if jsonString == "[DONE]" {
+                                    print("✅ ChatClient: Stream completed")
                                     continuation.finish()
                                     return
                                 }
@@ -129,8 +131,10 @@ public final class ChatClient: DifyClient {
                                 if let jsonData = jsonString.data(using: .utf8) {
                                     do {
                                         let response = try JSONDecoder().decode(StreamingResponse.self, from: jsonData)
+                                        print("📨 ChatClient: \(response.event ?? "unknown") event")
                                         continuation.yield(response)
                                     } catch {
+                                        print("❌ ChatClient: JSON decode error: \(error)")
                                         continue
                                     }
                                 }

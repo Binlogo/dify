@@ -229,7 +229,7 @@ public struct StreamingResponse: Codable {
     public let messageId: String?
     public let conversationId: String?
     public let answer: String?
-    public let createdAt: String?
+    public let createdAt: Date?
     public let taskId: String?
     public let workflowRunId: String?
     
@@ -240,5 +240,61 @@ public struct StreamingResponse: Codable {
         case createdAt = "created_at"
         case taskId = "task_id"
         case workflowRunId = "workflow_run_id"
+    }
+    
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        
+        event = try container.decodeIfPresent(String.self, forKey: .event)
+        messageId = try container.decodeIfPresent(String.self, forKey: .messageId)
+        conversationId = try container.decodeIfPresent(String.self, forKey: .conversationId)
+        answer = try container.decodeIfPresent(String.self, forKey: .answer)
+        taskId = try container.decodeIfPresent(String.self, forKey: .taskId)
+        workflowRunId = try container.decodeIfPresent(String.self, forKey: .workflowRunId)
+        
+        // 健壮的日期解析：支持多种格式
+        var parsedDate: Date?
+        if let createdAtValue = try? container.decode(Int.self, forKey: .createdAt) {
+            // Unix 时间戳（秒）
+            parsedDate = Date(timeIntervalSince1970: TimeInterval(createdAtValue))
+        } else if let createdAtValue = try? container.decode(Double.self, forKey: .createdAt) {
+            // Unix 时间戳（可能包含毫秒）
+            parsedDate = Date(timeIntervalSince1970: createdAtValue)
+        } else if let createdAtString = try? container.decode(String.self, forKey: .createdAt) {
+            // 尝试解析字符串格式的日期
+            if let timestamp = Double(createdAtString) {
+                // 数字字符串格式
+                parsedDate = Date(timeIntervalSince1970: timestamp)
+            } else {
+                // ISO 8601 或其他日期字符串格式
+                let formatter = ISO8601DateFormatter()
+                formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+                parsedDate = formatter.date(from: createdAtString)
+                
+                // 如果 ISO8601 解析失败，尝试其他常见格式
+                if parsedDate == nil {
+                    let fallbackFormatter = DateFormatter()
+                    fallbackFormatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSSSSS'Z'"
+                    parsedDate = fallbackFormatter.date(from: createdAtString)
+                }
+            }
+        }
+        createdAt = parsedDate
+    }
+    
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        
+        try container.encodeIfPresent(event, forKey: .event)
+        try container.encodeIfPresent(messageId, forKey: .messageId)
+        try container.encodeIfPresent(conversationId, forKey: .conversationId)
+        try container.encodeIfPresent(answer, forKey: .answer)
+        try container.encodeIfPresent(taskId, forKey: .taskId)
+        try container.encodeIfPresent(workflowRunId, forKey: .workflowRunId)
+        
+        // 编码为 Unix 时间戳
+        if let createdAt = createdAt {
+            try container.encode(Int(createdAt.timeIntervalSince1970), forKey: .createdAt)
+        }
     }
 } 

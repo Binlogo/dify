@@ -284,13 +284,44 @@ public struct FileUploadResponse: Codable {
     public let `extension`: String?
     public let mimeType: String?
     public let createdBy: String
-    public let createdAt: String
+    public let createdAt: Date?
     
     private enum CodingKeys: String, CodingKey {
         case id, name, size, `extension`
         case mimeType = "mime_type"
         case createdBy = "created_by"
         case createdAt = "created_at"
+    }
+    
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        
+        id = try container.decode(String.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        size = try container.decode(Int.self, forKey: .size)
+        `extension` = try container.decodeIfPresent(String.self, forKey: .`extension`)
+        mimeType = try container.decodeIfPresent(String.self, forKey: .mimeType)
+        createdBy = try container.decode(String.self, forKey: .createdBy)
+        
+        // 健壮的日期解析
+        createdAt = Self.parseDate(from: container, forKey: .createdAt)
+    }
+    
+    private static func parseDate(from container: KeyedDecodingContainer<CodingKeys>, forKey key: CodingKeys) -> Date? {
+        if let createdAtValue = try? container.decode(Int.self, forKey: key) {
+            return Date(timeIntervalSince1970: TimeInterval(createdAtValue))
+        } else if let createdAtValue = try? container.decode(Double.self, forKey: key) {
+            return Date(timeIntervalSince1970: createdAtValue)
+        } else if let createdAtString = try? container.decode(String.self, forKey: key) {
+            if let timestamp = Double(createdAtString) {
+                return Date(timeIntervalSince1970: timestamp)
+            } else {
+                let formatter = ISO8601DateFormatter()
+                formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+                return formatter.date(from: createdAtString)
+            }
+        }
+        return nil
     }
 }
 
@@ -303,7 +334,7 @@ public struct MetaResponse: Codable {
 public struct MessageResponse: Codable {
     public let id: String
     public let answer: String
-    public let createdAt: String
+    public let createdAt: Date?
     public let conversationId: String?
     public let feedback: MessageFeedback?
     public let retrieverResources: [RetrieverResource]?
@@ -315,6 +346,53 @@ public struct MessageResponse: Codable {
         case conversationId = "conversation_id"
         case retrieverResources = "retriever_resources"
     }
+    
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        
+        id = try container.decode(String.self, forKey: .id)
+        answer = try container.decode(String.self, forKey: .answer)
+        conversationId = try container.decodeIfPresent(String.self, forKey: .conversationId)
+        feedback = try container.decodeIfPresent(MessageFeedback.self, forKey: .feedback)
+        retrieverResources = try container.decodeIfPresent([RetrieverResource].self, forKey: .retrieverResources)
+        metadata = try container.decodeIfPresent(MessageMetadata.self, forKey: .metadata)
+        
+        // 健壮的日期解析
+        createdAt = Self.parseDate(from: container, forKey: .createdAt)
+    }
+    
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        
+        try container.encode(id, forKey: .id)
+        try container.encode(answer, forKey: .answer)
+        try container.encodeIfPresent(conversationId, forKey: .conversationId)
+        try container.encodeIfPresent(feedback, forKey: .feedback)
+        try container.encodeIfPresent(retrieverResources, forKey: .retrieverResources)
+        try container.encodeIfPresent(metadata, forKey: .metadata)
+        
+        // 编码为 Unix 时间戳
+        if let createdAt = createdAt {
+            try container.encode(Int(createdAt.timeIntervalSince1970), forKey: .createdAt)
+        }
+    }
+    
+    private static func parseDate(from container: KeyedDecodingContainer<CodingKeys>, forKey key: CodingKeys) -> Date? {
+        if let createdAtValue = try? container.decode(Int.self, forKey: key) {
+            return Date(timeIntervalSince1970: TimeInterval(createdAtValue))
+        } else if let createdAtValue = try? container.decode(Double.self, forKey: key) {
+            return Date(timeIntervalSince1970: createdAtValue)
+        } else if let createdAtString = try? container.decode(String.self, forKey: key) {
+            if let timestamp = Double(createdAtString) {
+                return Date(timeIntervalSince1970: timestamp)
+            } else {
+                let formatter = ISO8601DateFormatter()
+                formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+                return formatter.date(from: createdAtString)
+            }
+        }
+        return nil
+    }
 }
 
 /// Conversation response
@@ -324,7 +402,7 @@ public struct ConversationResponse: Decodable {
     public let inputs: [String: Any]
     public let status: String
     public let introduction: String
-    public let createdAt: String
+    public let createdAt: Date?
     
     private enum CodingKeys: String, CodingKey {
         case id, name, inputs, status, introduction
@@ -337,7 +415,9 @@ public struct ConversationResponse: Decodable {
         name = try container.decode(String.self, forKey: .name)
         status = try container.decode(String.self, forKey: .status)
         introduction = try container.decode(String.self, forKey: .introduction)
-        createdAt = try container.decode(String.self, forKey: .createdAt)
+        
+        // 健壮的日期解析
+        createdAt = Self.parseDate(from: container, forKey: .createdAt)
         
         // Handle Any type for inputs
         if let inputsData = try? container.decode(AnyCodable.self, forKey: .inputs) {
@@ -345,6 +425,23 @@ public struct ConversationResponse: Decodable {
         } else {
             inputs = [:]
         }
+    }
+    
+    private static func parseDate(from container: KeyedDecodingContainer<CodingKeys>, forKey key: CodingKeys) -> Date? {
+        if let createdAtValue = try? container.decode(Int.self, forKey: key) {
+            return Date(timeIntervalSince1970: TimeInterval(createdAtValue))
+        } else if let createdAtValue = try? container.decode(Double.self, forKey: key) {
+            return Date(timeIntervalSince1970: createdAtValue)
+        } else if let createdAtString = try? container.decode(String.self, forKey: key) {
+            if let timestamp = Double(createdAtString) {
+                return Date(timeIntervalSince1970: timestamp)
+            } else {
+                let formatter = ISO8601DateFormatter()
+                formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+                return formatter.date(from: createdAtString)
+            }
+        }
+        return nil
     }
 }
 

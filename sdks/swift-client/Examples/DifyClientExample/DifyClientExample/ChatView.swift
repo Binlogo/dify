@@ -171,11 +171,12 @@ struct ChatMessageView: View {
                     )
                 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(message.content)
+                    Text(message.content.isEmpty ? "..." : message.content)
                         .padding(12)
                         .background(Color(.systemGray6))
                         .cornerRadius(16)
                         .frame(maxWidth: .infinity * 0.7, alignment: .leading)
+                        .opacity(message.content.isEmpty ? 0.5 : 1.0)
                     
                     HStack {
                         Text(message.timestamp, style: .time)
@@ -232,7 +233,12 @@ class ChatManager: ObservableObject {
     }
     
     func sendMessage(_ content: String) {
-        guard let chatClient = chatClient else { return }
+        guard let chatClient = chatClient else { 
+            print("❌ ChatManager: chatClient is nil")
+            return 
+        }
+        
+        print("🚀 ChatManager: Sending message")
         
         // Add user message
         let userMessage = ChatMessage(content: content, isUser: true)
@@ -249,6 +255,8 @@ class ChatManager: ObservableObject {
                     conversationId: currentConversationId
                 )
                 
+                print("✅ ChatManager: Received response")
+                
                 await MainActor.run {
                     let aiMessage = ChatMessage(
                         content: response.answer,
@@ -261,6 +269,7 @@ class ChatManager: ObservableObject {
                     isLoading = false
                 }
             } catch {
+                print("❌ ChatManager: Error sending message: \(error)")
                 await MainActor.run {
                     let errorMessage = ChatMessage(
                         content: "抱歉，发生了错误：\(error.localizedDescription)",
@@ -274,15 +283,21 @@ class ChatManager: ObservableObject {
     }
     
     func sendStreamingMessage(_ content: String) {
-        guard let chatClient = chatClient else { return }
+        guard let chatClient = chatClient else { 
+            print("❌ ChatManager: chatClient is nil for streaming")
+            return 
+        }
+        
+        print("🌊 ChatManager: Sending streaming message")
         
         // Add user message
         let userMessage = ChatMessage(content: content, isUser: true)
         messages.append(userMessage)
         
-        // Add placeholder AI message
-        let aiMessage = ChatMessage(content: "", isUser: false)
-        messages.append(aiMessage)
+        // Add placeholder AI message with unique identifier
+        let placeholderMessage = ChatMessage(content: "", isUser: false)
+        let placeholderIndex = messages.count
+        messages.append(placeholderMessage)
         
         isLoading = true
         
@@ -297,15 +312,41 @@ class ChatManager: ObservableObject {
             do {
                 for try await chunk in stream {
                     await MainActor.run {
-                        if let lastIndex = messages.lastIndex(where: { !$0.isUser }) {
-                            if let answer = chunk.answer {
-                                messages[lastIndex] = messages[lastIndex].appendingContent(answer)
-                            }
-                            if let conversationId = chunk.conversationId {
-                                currentConversationId = conversationId
-                            }
-                            if let messageId = chunk.messageId {
-                                messages[lastIndex] = messages[lastIndex].withMessageId(messageId)
+                        // 简化的调试信息
+                        if let event = chunk.event {
+                            print("📨 ChatManager: \(event) - Answer: '\(chunk.answer ?? "nil")'")
+                        }
+                        
+                        // Use the specific index instead of searching for last non-user message
+                        if placeholderIndex < messages.count && !messages[placeholderIndex].isUser {
+                            
+                            // 检查是否有 answer 内容，不管事件类型
+                            if let answer = chunk.answer, !answer.isEmpty {
+                                // 创建新的消息对象来触发SwiftUI更新
+                                let updatedMessage = ChatMessage(
+                                    content: messages[placeholderIndex].content + answer,
+                                    isUser: false,
+                                    messageId: chunk.messageId ?? messages[placeholderIndex].messageId,
+                                    canProvideFeedback: messages[placeholderIndex].canProvideFeedback
+                                )
+                                messages[placeholderIndex] = updatedMessage
+                                
+                                // 更新会话ID
+                                if let conversationId = chunk.conversationId {
+                                    currentConversationId = conversationId
+                                }
+                            } else {
+                                // 对于 message_end 事件，确保设置 canProvideFeedback
+                                if let event = chunk.event, event == "message_end" {
+                                    let finalMessage = ChatMessage(
+                                        content: messages[placeholderIndex].content,
+                                        isUser: false,
+                                        messageId: chunk.messageId ?? messages[placeholderIndex].messageId,
+                                        canProvideFeedback: true
+                                    )
+                                    messages[placeholderIndex] = finalMessage
+                                    print("✅ ChatManager: Message finalized with feedback enabled")
+                                }
                             }
                         }
                     }
@@ -313,20 +354,23 @@ class ChatManager: ObservableObject {
                 
                 await MainActor.run {
                     isLoading = false
-                    // Enable feedback for the last AI message
-                    if let lastIndex = messages.lastIndex(where: { !$0.isUser }) {
-                        messages[lastIndex] = messages[lastIndex].withFeedbackEnabled(true)
+                    let finalContent = placeholderIndex < messages.count ? messages[placeholderIndex].content : ""
+                    
+                    if finalContent.isEmpty {
+                        print("⚠️ ChatManager: Message content is empty after streaming!")
+                    } else {
+                        print("✅ ChatManager: Streaming completed")
                     }
                 }
             } catch {
                 await MainActor.run {
-                    if let lastIndex = messages.lastIndex(where: { !$0.isUser }) {
-                        messages[lastIndex] = ChatMessage(
-                            content: "抱歉，发生了错误：\(error.localizedDescription)",
-                            isUser: false
-                        )
-                    }
                     isLoading = false
+                    print("❌ ChatManager: Streaming error: \(error)")
+                    
+                    // 添加错误消息
+                    if placeholderIndex < messages.count {
+                        messages[placeholderIndex].content = "流式响应出错: \(error.localizedDescription)"
+                    }
                 }
             }
         }
@@ -346,7 +390,7 @@ class ChatManager: ObservableObject {
 
 struct ChatMessage: Identifiable, Equatable {
     let id = UUID()
-    let content: String
+    var content: String
     let isUser: Bool
     let timestamp = Date()
     let messageId: String?
